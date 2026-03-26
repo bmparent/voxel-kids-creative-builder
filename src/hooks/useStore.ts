@@ -1,45 +1,27 @@
+/**
+ * useStore — backward-compatible facade over domain stores.
+ * 
+ * All existing component imports (`import { useStore } from '../hooks/useStore'`)
+ * continue to work unchanged. Under the hood, state is delegated to:
+ *   - worldStore (cubes, textures, shapes, scales)
+ *   - npcStore (NPCs, thinking, messages)
+ *   - playerStore (avatar, camera, water, dragged cube)
+ *   - uiStore (map, help, customizer)
+ */
 import { create } from 'zustand';
-import { nanoid } from 'nanoid';
+import { useWorldStore, CubeData, ShapeType } from '../stores/worldStore';
+import { useNPCStore, NPCData } from '../stores/npcStore';
+import { usePlayerStore, AvatarData, CameraMode, DraggedCubeData } from '../stores/playerStore';
+import { useUIStore } from '../stores/uiStore';
+import { saveWorldToServer } from '../network/syncService';
 
-export type ShapeType = 'cube' | 'sphere' | 'pyramid' | 'cylinder' | 'tree' | 'rock' | 'bush' | 'flower' | 'lamp' | 'fence';
-export type CameraMode = 'first' | 'third';
+// Re-export types for backward compat
+export type { CubeData, ShapeType, NPCData, AvatarData, CameraMode, DraggedCubeData };
 
-export interface AvatarData {
-  color: string;
-  style: string;
-  name: string;
-  clothingColor?: string;
-  hairColor?: string;
-}
-
-export interface CubeData {
-  id: string;
-  pos: [number, number, number];
-  texture: string;
-  shape: ShapeType;
-  scale: number;
-  rotation?: [number, number, number];
-  color?: string;
-}
-
-export interface NPCData {
-  id: string;
-  pos: [number, number, number];
-  name: string;
-  color: string;
-  style?: string;
-  clothingColor?: string;
-  hairColor?: string;
-  isThinking?: boolean;
-  currentTask?: string;
-  currentMessage?: string;
-  thoughtHistory?: { timestamp: number; thought: string; decision: string }[];
-}
-
-export interface DraggedCubeData extends CubeData {
-  originalPos: [number, number, number];
-}
-
+/**
+ * Combined game state interface — matches the original useStore signature.
+ * Components don't need to change their selectors.
+ */
 interface GameState {
   texture: string;
   shape: ShapeType;
@@ -74,171 +56,85 @@ interface GameState {
   setDraggedCube: (cube: DraggedCubeData | null) => void;
 }
 
-const getLocalStorage = (key: string) => JSON.parse(window.localStorage.getItem(key) || '[]');
-const setLocalStorage = (key: string, value: any) => window.localStorage.setItem(key, JSON.stringify(value));
+/**
+ * Facade store that reads from and writes to the domain stores.
+ * Uses Zustand's subscribe mechanism to stay in sync.
+ */
+export const useStore = create<GameState>((set, get) => {
+  // Subscribe to domain stores and mirror their state
+  useWorldStore.subscribe((worldState) => {
+    set({
+      cubes: worldState.cubes,
+      texture: worldState.texture,
+      shape: worldState.shape,
+      scale: worldState.scale,
+    });
+  });
 
-export const useStore = create<GameState>((set) => ({
-  texture: 'grass',
-  shape: 'cube',
-  scale: 1,
-  cameraMode: 'first',
-  playerAvatar: {
-    color: '#ffcc00',
-    style: 'casual',
-    name: 'Player',
-    clothingColor: '#3b82f6',
-    hairColor: '#4b2c20',
-  },
-  cubes: getLocalStorage('cubes') || [],
-  npcs: [
-    { id: 'npc-1', pos: [5, 0, 5], name: 'Builder Bob', color: '#ffcc00', style: 'worker', clothingColor: '#f97316', hairColor: '#1a1a1a' },
-    { id: 'npc-2', pos: [-5, 0, -5], name: 'Creative Cathy', color: '#ff66cc', style: 'artist', clothingColor: '#8b5cf6', hairColor: '#fbbf24' },
-  ],
-  isInWater: false,
-  showMap: false,
-  cameraDistance: 5,
-  draggedCube: null,
-  setDraggedCube: (cube) => set({ draggedCube: cube }),
-  addCube: (x, y, z) => {
-    set((state) => ({
-      cubes: [
-        ...state.cubes,
-        {
-          id: nanoid(),
-          pos: [x, y, z],
-          texture: state.texture,
-          shape: state.shape,
-          scale: state.scale,
-        },
-      ],
-    }));
-  },
-  bulkAddCubes: (newCubes) => {
-    set((state) => {
-      const existingPositions = new Set(state.cubes.map(c => c.pos.join(',')));
-      const filteredNewCubes = newCubes
-        .filter(nc => !existingPositions.has(`${nc.x},${nc.y},${nc.z}`))
-        .map(nc => ({
-          id: nanoid(),
-          pos: [nc.x, nc.y, nc.z] as [number, number, number],
-          texture: nc.texture,
-          shape: nc.shape || 'cube',
-          scale: nc.scale || 1,
-          rotation: nc.rotation || [0, 0, 0],
-          color: nc.color || '#ffffff',
-        }));
-      return {
-        cubes: [...state.cubes, ...filteredNewCubes],
-      };
+  useNPCStore.subscribe((npcState) => {
+    set({ npcs: npcState.npcs });
+  });
+
+  usePlayerStore.subscribe((playerState) => {
+    set({
+      playerAvatar: playerState.playerAvatar,
+      cameraMode: playerState.cameraMode,
+      cameraDistance: playerState.cameraDistance,
+      isInWater: playerState.isInWater,
+      draggedCube: playerState.draggedCube,
     });
-  },
-  addNPC: (x, y, z, name, color, style, clothingColor, hairColor) => {
-    set((state) => ({
-      npcs: [
-        ...state.npcs,
-        {
-          id: nanoid(),
-          pos: [x, y, z],
-          name,
-          color,
-          style,
-          clothingColor,
-          hairColor,
-        },
-      ],
-    }));
-  },
-  updateNPC: (id, data) => {
-    set((state) => ({
-      npcs: state.npcs.map((npc) => (npc.id === id ? { ...npc, ...data } : npc)),
-    }));
-  },
-  addNPCThought: (id, thought, decision) => {
-    set((state) => ({
-      npcs: state.npcs.map((npc) => {
-        if (npc.id === id) {
-          const newThought = { timestamp: Date.now(), thought, decision };
-          const thoughtHistory = [...(npc.thoughtHistory || []), newThought].slice(-10); // Keep last 10
-          return { ...npc, thoughtHistory };
-        }
-        return npc;
-      }),
-    }));
-  },
-  removeCube: (x, y, z) => {
-    set((state) => ({
-      cubes: state.cubes.filter((cube) => {
-        const [cx, cy, cz] = cube.pos;
-        return cx !== x || cy !== y || cz !== z;
-      }),
-    }));
-  },
-  setTexture: (texture) => {
-    set((state) => {
-      if (state.texture === texture) return state;
-      return { texture };
-    });
-  },
-  setShape: (shape) => {
-    set((state) => {
-      if (state.shape === shape) return state;
-      return { shape };
-    });
-  },
-  setScale: (scale) => {
-    set((state) => {
-      if (state.scale === scale) return state;
-      return { scale };
-    });
-  },
-  setInWater: (isInWater) => {
-    set((state) => {
-      if (state.isInWater === isInWater) return state;
-      return { isInWater };
-    });
-  },
-  setCameraMode: (cameraMode) => {
-    set((state) => {
-      if (state.cameraMode === cameraMode) return state;
-      return { cameraMode };
-    });
-  },
-  setCameraDistance: (cameraDistance) => {
-    set((state) => {
-      if (state.cameraDistance === cameraDistance) return state;
-      return { cameraDistance };
-    });
-  },
-  setPlayerAvatar: (avatar) => {
-    set((state) => ({
-      playerAvatar: { ...state.playerAvatar, ...avatar },
-    }));
-  },
-  setNPCThinking: (id, isThinking, task) => {
-    set((state) => ({
-      npcs: state.npcs.map((npc) => (npc.id === id ? { ...npc, isThinking, currentTask: task } : npc)),
-    }));
-  },
-  setNPCMessage: (id, message) => {
-    set((state) => ({
-      npcs: state.npcs.map((npc) => (npc.id === id ? { ...npc, currentMessage: message || undefined } : npc)),
-    }));
-  },
-  saveWorld: () => {
-    set((state) => {
-      setLocalStorage('cubes', state.cubes);
-      return state;
-    });
-  },
-  resetWorld: () => {
-    set(() => ({
-      cubes: [],
-    }));
-  },
-  setShowMap: (showMap) => set({ showMap }),
-  teleportPlayer: (pos) => {
-    // This will be handled by the Player component observing this state or a ref
-    // For now, we'll just emit an event or use a specific state that Player listens to
-    window.dispatchEvent(new CustomEvent('teleport-player', { detail: pos }));
-  },
-}));
+  });
+
+  useUIStore.subscribe((uiState) => {
+    set({ showMap: uiState.showMap });
+  });
+
+  // Initial state from domain stores
+  const world = useWorldStore.getState();
+  const npc = useNPCStore.getState();
+  const player = usePlayerStore.getState();
+  const ui = useUIStore.getState();
+
+  return {
+    // ── Mirrored state ──
+    texture: world.texture,
+    shape: world.shape,
+    scale: world.scale,
+    cubes: world.cubes,
+    npcs: npc.npcs,
+    isInWater: player.isInWater,
+    cameraMode: player.cameraMode,
+    cameraDistance: player.cameraDistance,
+    showMap: ui.showMap,
+    playerAvatar: player.playerAvatar,
+    draggedCube: player.draggedCube,
+
+    // ── Delegated actions ──
+    addCube: (x, y, z) => useWorldStore.getState().addCube(x, y, z),
+    removeCube: (x, y, z) => useWorldStore.getState().removeCube(x, y, z),
+    bulkAddCubes: (cubes) => useWorldStore.getState().bulkAddCubes(cubes),
+    setTexture: (t) => useWorldStore.getState().setTexture(t),
+    setShape: (s) => useWorldStore.getState().setShape(s),
+    setScale: (s) => useWorldStore.getState().setScale(s),
+    resetWorld: () => useWorldStore.getState().resetWorld(),
+
+    addNPC: (x, y, z, name, color, style, cc, hc) => useNPCStore.getState().addNPC(x, y, z, name, color, style, cc, hc),
+    updateNPC: (id, data) => useNPCStore.getState().updateNPC(id, data),
+    setNPCThinking: (id, t, task) => useNPCStore.getState().setNPCThinking(id, t, task),
+    setNPCMessage: (id, msg) => useNPCStore.getState().setNPCMessage(id, msg),
+    addNPCThought: (id, thought, dec) => useNPCStore.getState().addNPCThought(id, thought, dec),
+
+    setPlayerAvatar: (a) => usePlayerStore.getState().setPlayerAvatar(a),
+    setCameraMode: (m) => usePlayerStore.getState().setCameraMode(m),
+    setCameraDistance: (d) => usePlayerStore.getState().setCameraDistance(d),
+    setInWater: (w) => usePlayerStore.getState().setInWater(w),
+    setDraggedCube: (c) => usePlayerStore.getState().setDraggedCube(c),
+    teleportPlayer: (pos) => usePlayerStore.getState().teleportPlayer(pos),
+
+    setShowMap: (s) => useUIStore.getState().setShowMap(s),
+
+    saveWorld: () => {
+      saveWorldToServer();
+    },
+  };
+});

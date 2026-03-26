@@ -22,6 +22,7 @@ import { WorldMap } from './components/WorldMap';
 import { useState, useEffect } from 'react';
 import { Save, Trash2, HelpCircle, X, MousePointer2, User, Camera, Navigation } from 'lucide-react';
 import confetti from 'canvas-confetti';
+import { useNetworkSync } from './network/syncService';
 
 import { DraggedCube } from './components/DraggedCube';
 
@@ -41,6 +42,9 @@ export default function App() {
   const [showCustomizer, setShowCustomizer] = useState(false);
 
   const [isUIHovered, setIsUIHovered] = useState(false);
+
+  // Initialize network sync (load from server, autosave)
+  useNetworkSync();
 
   // Manage pointer lock cooldown to avoid browser errors
   useEffect(() => {
