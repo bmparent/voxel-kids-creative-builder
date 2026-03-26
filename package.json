@@ -4,8 +4,9 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "tsx server.ts",
+    "dev": "tsx services/gateway/index.ts",
     "dev:vite": "vite --port=3000 --host=0.0.0.0",
+    "start": "tsx services/gateway/index.ts",
     "build": "vite build",
     "preview": "vite preview",
     "clean": "rm -rf dist",
