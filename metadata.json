@@ -1,0 +1,5 @@
+{
+  "name": "Voxel Kids: Creative Builder",
+  "description": "A 3D voxel building game for kids to explore their imagination and build amazing structures.",
+  "requestFramePermissions": ["pointer-lock", "microphone"]
+}

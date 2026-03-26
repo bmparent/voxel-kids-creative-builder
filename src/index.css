@@ -1,0 +1,13 @@
+@import "tailwindcss";
+
+#underwater-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  background: rgba(0, 100, 255, 0.3);
+  backdrop-filter: blur(2px);
+  pointer-events: none;
+  z-index: 5;
+}
